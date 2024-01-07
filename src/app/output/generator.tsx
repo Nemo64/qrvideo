@@ -3,63 +3,112 @@
 import { useEffect, useRef, useState } from "react";
 import { useObjectURL } from "@/use_object_url";
 import QRCode from "qrcode";
+import { base32, base64 } from "rfc4648";
 
 export function QrGenerator() {
   const [file, setFile] = useState<File | null>(null);
   const [playing, setPlaying] = useState<boolean>(false);
   const videoUrl = useObjectURL(file);
+
+  const animationFrameHandle = useRef<number>(0);
   const qrCanvas = useRef<HTMLCanvasElement>(null);
   const videoElement = useRef<HTMLVideoElement>(null);
+  const imgElement = useRef<HTMLImageElement>(null);
+  const sizeRef = useRef<HTMLPreElement>(null);
 
   useEffect(() => {
+    cancelAnimationFrame(animationFrameHandle.current);
     if (!videoElement.current || !qrCanvas.current || !playing) {
       return;
     }
 
     const videoCanvas = document.createElement("canvas");
-    videoCanvas.width = 160;
-    videoCanvas.height = 120;
+    videoCanvas.width = 8 * 16;
+    videoCanvas.height = 8 * 9;
     const videoCanvasContext = videoCanvas.getContext("2d")!;
 
-    let animationFrameHandle: number | null = null;
-    async function drawImage() {
-      if (videoElement.current && qrCanvas.current) {
+    // https://www.qrcode.com/en/about/version.html
+    const version = 32;
+    const errorCorrectionLevel = "L";
+    const characterTarget = 2840;
+    const sizeTarget = Math.floor(characterTarget * (5 / 8));
+    const maxFramerate = 20;
+
+    let lastFrameTime = 0;
+    let lastQuality = 50;
+
+    async function drawImage(timestamp: number) {
+      cancelAnimationFrame(animationFrameHandle.current);
+      if (timestamp - lastFrameTime < 1000 / maxFramerate) {
+        animationFrameHandle.current = requestAnimationFrame(drawImage);
+        return;
+      }
+
+      if (videoElement.current!.paused) {
+        return;
+      }
+
+      const lastAnimationFrameHandle = animationFrameHandle.current;
+      try {
         videoCanvasContext.drawImage(
-          videoElement.current,
+          videoElement.current!,
           0,
           0,
           videoCanvas.width,
           videoCanvas.height,
         );
-        const frameBlob: Blob = await new Promise((resolve, reject) => {
-          videoCanvas.toBlob(
-            (blob) => (blob ? resolve(blob) : reject()),
-            "image/jpeg",
-            0.1,
-          );
-        });
-        const uint8Array = new Uint8Array(await frameBlob.arrayBuffer());
-        await QRCode.toCanvas(qrCanvas.current, [
-          { data: uint8Array, mode: "byte" },
-        ]);
+        const { blob, quality } = await encodeCanvas(
+          videoCanvas,
+          sizeTarget,
+          lastQuality,
+        );
+        const binary = new Uint8Array(await blob.arrayBuffer());
+        const encodedImage = base32
+          .stringify(binary)
+          .toUpperCase()
+          .replace(/=+$/, "");
+        imgElement.current!.src =
+          "data:image/webp;base64," +
+          base64.stringify(base32.parse(encodedImage, { loose: true }));
+        await QRCode.toCanvas(
+          qrCanvas.current,
+          [{ data: encodedImage, mode: "alphanumeric" }],
+          { errorCorrectionLevel, version, margin: 0, scale: 1 },
+        );
+        lastFrameTime = timestamp;
+        lastQuality = quality;
+        sizeRef.current!.innerText = [
+          `binary: ${binary.length} / ${sizeTarget} bytes`,
+          `base32: ${encodedImage.length} bytes / ${characterTarget} characters`,
+          `encoded: ${((encodedImage.length * 11) / 16).toFixed(0)} bytes`,
+          `quality: ${quality} %`,
+        ].join("\n");
+      } finally {
+        // ensure that no other frame has been queued in the meantime
+        if (lastAnimationFrameHandle === animationFrameHandle.current) {
+          animationFrameHandle.current = requestAnimationFrame(drawImage);
+        }
       }
-
-      animationFrameHandle = requestAnimationFrame(drawImage);
     }
 
-    animationFrameHandle = requestAnimationFrame(drawImage);
+    cancelAnimationFrame(animationFrameHandle.current);
+    animationFrameHandle.current = requestAnimationFrame(drawImage);
 
     return () => {
-      if (animationFrameHandle) {
-        cancelAnimationFrame(animationFrameHandle);
-      }
+      cancelAnimationFrame(animationFrameHandle.current);
     };
   }, [playing]);
 
   return (
-    <div className="grid grid-cols-2 gap-3 m-3">
+    <div className="grid grid-cols-1 landscape:grid-cols-2 gap-3 m-3">
       <div>
-        <canvas ref={qrCanvas} />
+        <canvas
+          ref={qrCanvas}
+          className="!w-full !h-auto bg-slate-200 [image-rendering:pixelated] blur-[1px]"
+        />
+        <div>
+          <pre ref={sizeRef}></pre>
+        </div>
       </div>
       <div className="flex flex-col gap-3">
         <div>
@@ -87,7 +136,52 @@ export function QrGenerator() {
             onPause={() => setPlaying(false)}
           />
         )}
+        <img ref={imgElement} className="w-full bg-slate-200" />
       </div>
     </div>
   );
+}
+
+async function encodeCanvas(
+  canvas: HTMLCanvasElement,
+  maxSize: number,
+  lastQuality = 50,
+): Promise<{ blob: Blob; quality: number }> {
+  let quality = lastQuality;
+  let step = 2;
+  let blob: Blob;
+
+  const encode = (): Promise<Blob> => {
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject()),
+        "image/webp",
+        quality / 100,
+      );
+    });
+  };
+
+  blob = await encode();
+  if (blob.size > maxSize) {
+    do {
+      quality -= step;
+      if (quality < 0) {
+        throw new Error(`Image size of ${blob.size} bytes is too large`);
+      }
+
+      blob = await encode();
+    } while (blob.size > maxSize);
+    return { blob, quality };
+  } else {
+    while (blob.size < maxSize * 0.99 && quality <= 100) {
+      quality += step;
+      const nextBlob = await encode();
+      if (nextBlob.size > maxSize) {
+        break;
+      } else {
+        blob = nextBlob;
+      }
+    }
+    return { blob, quality: quality - step };
+  }
 }

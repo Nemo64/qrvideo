@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "next dev --experimental-https",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -11,9 +11,11 @@
   },
   "dependencies": {
     "next": "14.0.4",
+    "qr-scanner": "^1.4.2",
     "qrcode": "^1.5.3",
     "react": "^18",
-    "react-dom": "^18"
+    "react-dom": "^18",
+    "rfc4648": "^1.5.3"
   },
   "devDependencies": {
     "@types/node": "^20",

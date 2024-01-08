@@ -23,9 +23,10 @@ export function QrGenerator() {
     }
 
     const videoCanvas = document.createElement("canvas");
-    videoCanvas.width = 8 * 16;
-    videoCanvas.height = 8 * 9;
+    videoCanvas.width = 16 * 10;
+    videoCanvas.height = 9 * 10;
     const videoCanvasContext = videoCanvas.getContext("2d")!;
+    videoCanvasContext.imageSmoothingQuality = "medium";
 
     // https://www.qrcode.com/en/about/version.html
     const version = 32;
@@ -73,7 +74,7 @@ export function QrGenerator() {
         await QRCode.toCanvas(
           qrCanvas.current,
           [{ data: encodedImage, mode: "alphanumeric" }],
-          { errorCorrectionLevel, version, margin: 0, scale: 1 },
+          { errorCorrectionLevel, version, margin: 2, scale: 2 },
         );
         lastFrameTime = timestamp;
         lastQuality = quality;
@@ -101,11 +102,8 @@ export function QrGenerator() {
 
   return (
     <div className="grid grid-cols-1 landscape:grid-cols-2 gap-3 m-3">
-      <div>
-        <canvas
-          ref={qrCanvas}
-          className="!w-full !h-auto bg-slate-200 [image-rendering:pixelated] blur-[1px]"
-        />
+      <div className="flex flex-col gap-3">
+        <canvas ref={qrCanvas} className="!w-full !h-auto" />
         <div>
           <pre ref={sizeRef}></pre>
         </div>
@@ -136,7 +134,7 @@ export function QrGenerator() {
             onPause={() => setPlaying(false)}
           />
         )}
-        <img ref={imgElement} className="w-full bg-slate-200" />
+        <img ref={imgElement} className="w-full bg-neutral-500/50" />
       </div>
     </div>
   );
